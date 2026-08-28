@@ -162,6 +162,8 @@ table.st td:first-child{text-align:left;font-weight:bold;background:#e8e8e8}
     <button class="nb gray" onclick="goToday()">Aujourd'hui</button>
     <button class="nb red" onclick="openPrintModal()">🖨 Imprimer</button>
     <button class="nb" style="background:#155E8E" onclick="refreshFromCloud()">🔄 Actualiser</button>
+    <button class="nb" style="background:#1a7a40" onclick="syncExcel()" title="Lire / synchroniser depuis le fichier Excel">📥 Synchroniser Excel</button>
+    <button class="nb gray" style="padding:5px 8px" onclick="resetExcelFile()" title="Choisir un autre fichier Excel">📁</button>
   </div>
   <div class="legend">
     <b>Équipes :</b>
@@ -1113,6 +1115,174 @@ async function doExcelExport(){
     alert('Erreur lors de la génération : '+e.message);
   }
   btn.textContent='📥 Générer le fichier';btn.disabled=false;
+}
+
+// ==================================================================
+// ============ IMPORT / SYNCHRONISATION DEPUIS EXCEL ===============
+// Lit le fichier Excel (local ou OneDrive synchronisé) et met à jour
+// le planning + les trames. Ne modifie JAMAIS le fichier Excel.
+// ==================================================================
+const XLSX_CDN='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+let excelFileHandle=null;   // poignée fichier (File System Access), persistée dans IndexedDB
+let syncUnlocked=false;
+
+function stripAcc(s){return String(s).normalize('NFD').replace(/[̀-ͯ]/g,'');}
+function normU(x){return x==null?'':stripAcc(x).replace(/ /g,' ').trim().toUpperCase();}
+
+// Correspondance noms Excel -> noms de l'appli (gère fautes de frappe / variantes)
+const AGENT_MAP={
+  'AGNES':'AGNES','CELINE':'CELINE','LAETITIA':'LAETITIA',
+  'DIOP':'DIOP S','DIOP S':'DIOP S',
+  'NATHALIE':'NATHALIE','SABRINA':'SABRINA',
+  'CHRISTELLE':'CHRISTELLE','CHIRSTELLE':'CHRISTELLE',
+  'STEPHANIE':'STEPHANIE','GABRIELLA':'GABRIELLA'
+};
+// Reconnaît un mois FR même abrégé (SEPT, NOV, DEC, JUIL, AOUT...)
+function monthIndexFR(tok){
+  const t=stripAcc(tok).toUpperCase();
+  if(t.startsWith('JANV')||t==='JAN')return 0;
+  if(t.startsWith('FEV'))return 1;
+  if(t.startsWith('MAR'))return 2;
+  if(t.startsWith('AVR'))return 3;
+  if(t==='MAI')return 4;
+  if(t.startsWith('JUIN'))return 5;
+  if(t.startsWith('JUIL'))return 6;
+  if(t.startsWith('AOU'))return 7;
+  if(t.startsWith('SEP'))return 8;
+  if(t.startsWith('OCT'))return 9;
+  if(t.startsWith('NOV'))return 10;
+  if(t.startsWith('DEC'))return 11;
+  return -1;
+}
+
+function loadXLSX(){
+  if(window.XLSX)return Promise.resolve();
+  return new Promise((res,rej)=>{const s=document.createElement('script');s.src=XLSX_CDN;s.onload=res;s.onerror=()=>rej(new Error('Chargement du lecteur Excel impossible'));document.head.appendChild(s);});
+}
+
+// Analyse le classeur : détecte chaque bloc mois, sépare planning et trames
+function parseWorkbook(buf){
+  const wb=XLSX.read(buf,{type:'array'});
+  const outP={}, outT={};                 // année -> mois -> agent -> jour -> code
+  const stats={planning:new Set(),trames:new Set(),cells:0};
+  const hdrRe=/^\s*([A-Za-zÀ-ÿ\.]+)\s+(\d{4})/;
+  wb.SheetNames.forEach(name=>{
+    try{
+      const ws=wb.Sheets[name]; if(!ws)return;
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,defval:null});
+      const isTrame=normU(name).startsWith('TRAME');
+      const dest=isTrame?outT:outP;
+      const seen=new Set();
+      for(let i=0;i<rows.length;i++){
+        const a=(rows[i]&&rows[i][0]!=null)?String(rows[i][0]):'';
+        const m=hdrRe.exec(a);
+        if(!m)continue;
+        const mo=monthIndexFR(m[1]); const yr=parseInt(m[2],10);
+        if(mo<0||yr<2025||yr>2100)continue;        // on ignore l'historique < 2025
+        const key=yr+'-'+mo; if(seen.has(key))continue;
+        const dim=new Date(yr,mo+1,0).getDate();
+        const dayRow=rows[i+1]||[];
+        const colDay={};
+        for(let c=1;c<dayRow.length;c++){const dv=dayRow[c];if(typeof dv==='number'&&dv>=1&&dv<=dim)colDay[c]=dv;}
+        if(Object.keys(colDay).length<10)continue;  // pas un vrai bloc mois
+        const block={};let nAg=0;
+        for(let r=i+2;r<Math.min(i+2+13,rows.length);r++){
+          const ag=AGENT_MAP[normU(rows[r]&&rows[r][0])];
+          if(!ag)continue;
+          const codes={};
+          for(const c in colDay){
+            let v=rows[r][c]; if(v==null)continue;
+            v=String(v).trim(); if(v==='')continue;
+            const vu=v.toUpperCase();
+            if(/^\d+$/.test(vu))continue;           // ignore nombres parasites
+            codes[colDay[c]]=vu; stats.cells++;
+          }
+          block[ag]=codes; nAg++;
+        }
+        if(nAg>=5){
+          if(!dest[yr])dest[yr]={};
+          dest[yr][mo]=block; seen.add(key);
+          (isTrame?stats.trames:stats.planning).add(key);
+        }
+      }
+    }catch(e){console.warn('Feuille ignorée:',name,e);}
+  });
+  return {outP,outT,stats};
+}
+
+// Ajoute une année dans tous les sélecteurs si absente (garde le tri)
+function ensureYearOption(y){
+  ['yearSel','statsYear','annuelYear','trameYear','exportYear','pm1y','pm2y','pm3y'].forEach(id=>{
+    const s=document.getElementById(id); if(!s)return;
+    if(![...s.options].some(o=>+o.value===y)){
+      const o=document.createElement('option');o.value=y;o.textContent=y;s.appendChild(o);
+      const cur=s.value;
+      [...s.options].sort((a,b)=>+a.value-+b.value).forEach(op=>s.appendChild(op));
+      if(cur)s.value=cur;
+    }
+  });
+}
+
+function applyImport(outP,outT){
+  let minY=2026,maxY=2030;
+  function merge(dest,src){for(const y in src)for(const mo in src[y]){if(!dest[y])dest[y]={};dest[y][mo]=src[y][mo];const yi=+y;if(yi<minY)minY=yi;if(yi>maxY)maxY=yi;}}
+  merge(planning,outP); merge(trames,outT);
+  for(let y=minY;y<=maxY;y++)ensureYearOption(y);
+}
+
+// ---- Stockage de la poignée fichier (pour re-synchroniser sans re-choisir) ----
+function idbGet(k){return new Promise(res=>{try{const o=indexedDB.open('apu_fs',1);o.onupgradeneeded=()=>o.result.createObjectStore('h');o.onsuccess=()=>{try{const t=o.result.transaction('h','readonly').objectStore('h').get(k);t.onsuccess=()=>res(t.result||null);t.onerror=()=>res(null);}catch(e){res(null);}};o.onerror=()=>res(null);}catch(e){res(null);}});}
+function idbSet(k,v){return new Promise(res=>{try{const o=indexedDB.open('apu_fs',1);o.onupgradeneeded=()=>o.result.createObjectStore('h');o.onsuccess=()=>{try{const t=o.result.transaction('h','readwrite').objectStore('h').put(v,k);t.onsuccess=()=>res(1);t.onerror=()=>res(0);}catch(e){res(0);}};o.onerror=()=>res(0);}catch(e){res(0);}});}
+
+async function readViaHandle(h){
+  if(h.queryPermission){let p=await h.queryPermission({mode:'read'});if(p!=='granted'){p=await h.requestPermission({mode:'read'});if(p!=='granted')throw new Error('perm');}}
+  const f=await h.getFile();
+  return await f.arrayBuffer();
+}
+function pickFileClassic(){
+  return new Promise((res,rej)=>{const inp=document.createElement('input');inp.type='file';inp.accept='.xlsx,.xls';inp.onchange=()=>{const f=inp.files&&inp.files[0];if(!f){rej(new Error('Aucun fichier'));return;}const rd=new FileReader();rd.onload=()=>res(rd.result);rd.onerror=()=>rej(new Error('Lecture impossible'));rd.readAsArrayBuffer(f);};inp.click();});
+}
+function resetExcelFile(){excelFileHandle=null;idbSet('excelHandle',null);syncExcel();}
+
+async function syncExcel(){
+  if(!syncUnlocked){
+    const pw=prompt('🔒 Code pour modifier / synchroniser :');
+    if(pw===null)return;
+    if(pw!==TRAME_PW){alert('❌ Code incorrect');return;}
+    syncUnlocked=true;
+  }
+  try{
+    setStatus('📥 Lecture du fichier Excel…','sync-pending');
+    let buf=null;
+    if('showOpenFilePicker' in window){
+      if(!excelFileHandle)excelFileHandle=await idbGet('excelHandle');
+      if(excelFileHandle){try{buf=await readViaHandle(excelFileHandle);}catch(e){excelFileHandle=null;}}
+      if(!buf){
+        let h;
+        try{[h]=await window.showOpenFilePicker({types:[{description:'Fichier Excel',accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx']}}],excludeAcceptAllOption:false});}
+        catch(e){if(e&&e.name==='AbortError'){setStatus('Synchronisation annulée','');return;}throw e;}
+        excelFileHandle=h; await idbSet('excelHandle',h);
+        buf=await readViaHandle(h);
+      }
+    } else {
+      buf=await pickFileClassic();
+    }
+    await loadXLSX();
+    setStatus('⚙️ Analyse du planning…','sync-pending');
+    const {outP,outT,stats}=parseWorkbook(buf);
+    const nP=stats.planning.size,nT=stats.trames.size;
+    if(nP+nT===0){setStatus('⚠️ Aucun mois reconnu','sync-err');alert('Aucun mois reconnu dans ce fichier.\n\nVérifie qu\'il s\'agit bien du planning APU (agents en lignes, jours en colonnes).');return;}
+    applyImport(outP,outT);
+    save();                       // pousse vers le cloud -> visible par tous
+    render();renderStats();renderAnnuel();if(trameUnlocked)renderTrame();
+    setStatus('✅ Synchronisé depuis Excel','sync-ok');
+    alert('✅ Synchronisation terminée\n\n• '+nP+' mois de planning\n• '+nT+' mois de trames (onglet protégé)\n• '+stats.cells+' cases lues\n\nLes modifications sont enregistrées et visibles par tous.');
+  }catch(e){
+    console.error(e);
+    if(e&&e.name==='AbortError'){setStatus('','');return;}
+    setStatus('⚠️ Erreur de synchronisation','sync-err');
+    alert('Erreur lors de la synchronisation :\n'+(e&&e.message||e));
+  }
 }
 
 ['modal','printModal','exportModal'].forEach(id=>{
