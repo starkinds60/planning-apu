@@ -485,7 +485,11 @@ function st(y,mo,ag,d,v){
 // ============ JSONBIN CONFIG ============
 const MASTER_KEY = '$2a$10$m1KoDs3Yp8Bk6YWaUXqepuPEveryInfq7Mq9dwJk3cVoAVwMj8nom';
 const BIN_NAME   = 'APU_NUIT_CSE';
-let BIN_ID       = localStorage.getItem('apu_bin_id') || null;
+// Stockage cloud PARTAGÉ par TOUS les appareils (identifiant fixe).
+// Garantit qu'après une synchro Excel, les données sont les mêmes partout
+// (téléphone, autre PC…). Ne pas modifier cet identifiant.
+const SHARED_BIN_ID = '6a920394da38895dfe1df305';
+let BIN_ID       = SHARED_BIN_ID;
 let saveTimer    = null;
 let isSaving     = false;
 
@@ -544,9 +548,10 @@ function save(){
 }
 
 async function cloudSave(){
-  if(isSaving) return;
+  if(isSaving) return false;
   isSaving = true;
   setStatus('💾 Sauvegarde...','sync-pending');
+  let ok = false;
   try{
     const data = { planning, trames };
     if(BIN_ID){
@@ -556,11 +561,13 @@ async function cloudSave(){
       localStorage.setItem('apu_bin_id', BIN_ID);
     }
     setStatus('✅ Sauvegardé en ligne','sync-ok');
+    ok = true;
   } catch(e){
     setStatus('⚠️ Sauvegarde locale uniquement','sync-err');
     console.error('JSONBin save error:', e);
   }
   isSaving = false;
+  return ok;
 }
 
 async function doLoad(){
@@ -968,6 +975,11 @@ async function init(){
   ['pm1y','pm2y','pm3y'].forEach(id=>fy(id));
   const as=document.getElementById('statsAgent');
   [['','— Tous —'],...AGENTS.map(a=>[a,a])].forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;as.appendChild(o);});
+  // Inclure dans les menus toutes les années présentes dans les données (cloud/local)
+  const _yrs=new Set();
+  Object.keys(planning||{}).forEach(y=>_yrs.add(+y));
+  Object.keys(trames||{}).forEach(y=>_yrs.add(+y));
+  _yrs.forEach(y=>{if(y>=2000&&y<=2100)ensureYearOption(y);});
   render();renderStats();renderAnnuel();
 }
 
@@ -1373,10 +1385,16 @@ async function syncExcel(){
     const nP=stats.planning.size,nT=stats.trames.size;
     if(nP+nT===0){setStatus('⚠️ Aucun mois reconnu','sync-err');alert('Aucun mois reconnu dans ce fichier.\n\nVérifie qu\'il s\'agit bien du planning APU (agents en lignes, jours en colonnes).');return;}
     applyImport(outP,outT);
-    save();                       // pousse vers le cloud -> visible par tous
     render();renderStats();renderAnnuel();if(trameUnlocked)renderTrame();
-    setStatus('✅ Synchronisé depuis Excel','sync-ok');
-    alert('✅ Synchronisation terminée\n\n• '+nP+' mois de planning\n• '+nT+' mois de trames (onglet protégé)\n• '+stats.cells+' cases lues\n\nLes modifications sont enregistrées et visibles par tous.');
+    // Sauvegarde LOCALE + enregistrement en ligne IMMÉDIAT dans le stockage partagé
+    try{localStorage.setItem('apu_plan',JSON.stringify(planning));localStorage.setItem('apu_trame',JSON.stringify(trames));}catch(e){}
+    clearTimeout(saveTimer);
+    setStatus('💾 Enregistrement en ligne…','sync-pending');
+    const cloudOk = await cloudSave();
+    setStatus(cloudOk?'✅ Synchronisé + enregistré en ligne':'⚠️ Importé (local seulement)', cloudOk?'sync-ok':'sync-err');
+    alert('✅ Synchronisation terminée\n\n• '+nP+' mois de planning\n• '+nT+' mois de trames (onglet protégé)\n• '+stats.cells+' cases lues\n\n'+(cloudOk
+      ? '☁️ Enregistré en ligne — les données seront identiques sur TOUS les appareils (téléphone, autre PC) à la prochaine ouverture.'
+      : '⚠️ Enregistré sur cet appareil seulement (le cloud n\'a pas répondu). Relance la synchro quand tu as du réseau.'));
   }catch(e){
     console.error(e);
     if(e&&e.name==='AbortError'){setStatus('','');return;}
