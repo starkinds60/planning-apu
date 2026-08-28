@@ -1242,31 +1242,38 @@ async function readViaHandle(h){
 function pickFileClassic(){
   return new Promise((res,rej)=>{const inp=document.createElement('input');inp.type='file';inp.accept='.xlsx,.xls';inp.onchange=()=>{const f=inp.files&&inp.files[0];if(!f){rej(new Error('Aucun fichier'));return;}const rd=new FileReader();rd.onload=()=>res(rd.result);rd.onerror=()=>rej(new Error('Lecture impossible'));rd.readAsArrayBuffer(f);};inp.click();});
 }
-function resetExcelFile(){excelFileHandle=null;idbSet('excelHandle',null);syncExcel();}
+// Au chargement, on récupère la poignée fichier mémorisée (pour re-synchro en 1 clic, sans re-choisir)
+try{ idbGet('excelHandle').then(function(h){ if(h && !excelFileHandle) excelFileHandle=h; }); }catch(e){}
+
+function resetExcelFile(){excelFileHandle=null;try{idbSet('excelHandle',null);}catch(e){}syncExcel();}
 
 async function syncExcel(){
-  if(!syncUnlocked){
-    const pw=prompt('🔒 Code pour modifier / synchroniser :');
-    if(pw===null)return;
-    if(pw!==TRAME_PW){alert('❌ Code incorrect');return;}
-    syncUnlocked=true;
-  }
   try{
-    setStatus('📥 Lecture du fichier Excel…','sync-pending');
+    // 1) Obtenir le fichier — DOIT rester dans le geste du clic (aucun prompt/await avant le sélecteur)
     let buf=null;
-    if('showOpenFilePicker' in window){
-      if(!excelFileHandle)excelFileHandle=await idbGet('excelHandle');
-      if(excelFileHandle){try{buf=await readViaHandle(excelFileHandle);}catch(e){excelFileHandle=null;}}
-      if(!buf){
-        let h;
-        try{[h]=await window.showOpenFilePicker({types:[{description:'Fichier Excel',accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx']}}],excludeAcceptAllOption:false});}
-        catch(e){if(e&&e.name==='AbortError'){setStatus('Synchronisation annulée','');return;}throw e;}
-        excelFileHandle=h; await idbSet('excelHandle',h);
-        buf=await readViaHandle(h);
-      }
-    } else {
-      buf=await pickFileClassic();
+    if(excelFileHandle){
+      try{ buf=await readViaHandle(excelFileHandle); }
+      catch(e){ excelFileHandle=null; }        // poignée périmée -> on redemandera le fichier
     }
+    if(buf===null){
+      if('showOpenFilePicker' in window){
+        let h;
+        try{[h]=await window.showOpenFilePicker({types:[{description:'Fichier Excel',accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx'],'application/vnd.ms-excel':['.xls']}}]});}
+        catch(e){if(e&&e.name==='AbortError'){setStatus('Synchronisation annulée','');return;}throw e;}
+        excelFileHandle=h; try{idbSet('excelHandle',h);}catch(e){}
+        buf=await readViaHandle(h);
+      } else {
+        buf=await pickFileClassic();
+      }
+    }
+    // 2) Mot de passe APRÈS avoir le fichier (le sélecteur a déjà eu son geste utilisateur)
+    if(!syncUnlocked){
+      const pw=prompt('🔒 Code pour valider la synchronisation :');
+      if(pw===null){setStatus('','');return;}
+      if(pw!==TRAME_PW){alert('❌ Code incorrect');setStatus('','');return;}
+      syncUnlocked=true;
+    }
+    // 3) Analyse + application
     await loadXLSX();
     setStatus('⚙️ Analyse du planning…','sync-pending');
     const {outP,outT,stats}=parseWorkbook(buf);
