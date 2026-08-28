@@ -101,6 +101,53 @@ table.st td:first-child{text-align:left;font-weight:bold;background:#e8e8e8}
 .pwinput{width:220px;padding:8px 10px;font-size:14px;border:1px solid #ccc;border-radius:4px;display:block;margin:0 auto 8px;text-align:center}
 .pwerr{color:#cc0000;font-size:12px;min-height:18px;margin-bottom:6px}
 
+/* ============ PAGE D'ACCUEIL / CONNEXION ============ */
+#loginGate{position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#123f63 0%,#0d2b45 100%);display:flex;align-items:center;justify-content:center;padding:20px}
+#loginGate.hidden{display:none}
+.login-card{background:#fff;border-radius:16px;padding:36px 30px 30px;max-width:380px;width:100%;text-align:center;box-shadow:0 16px 48px rgba(0,0,0,.4)}
+.login-logo{width:118px;height:118px;margin:0 auto 16px;display:block}
+.login-title{color:#155E8E;font-size:22px;font-weight:bold;letter-spacing:2px}
+.login-sub{color:#6b7785;font-size:13px;margin:2px 0 22px}
+.login-card input{width:100%;padding:13px 14px;font-size:16px;border:1px solid #ccd3da;border-radius:9px;text-align:center;margin-bottom:6px}
+.login-card input:focus{border-color:#155E8E;outline:none;box-shadow:0 0 0 3px rgba(21,94,142,.15)}
+.login-btn{width:100%;padding:13px;font-size:16px;background:#155E8E;color:#fff;border:none;border-radius:9px;cursor:pointer;font-weight:bold;margin-top:4px}
+.login-btn:hover{filter:brightness(1.12)}
+.login-err{color:#cc0000;font-size:13px;min-height:20px;margin:4px 0 2px}
+
+/* ============ MOBILE / RESPONSIVE (n'affecte PAS le PC) ============ */
+@media (max-width:820px){
+  body{font-size:13px}
+  h1{font-size:14px;padding:8px 10px;flex-wrap:wrap;gap:6px;line-height:1.3}
+  #syncStatus{margin-left:0 !important;order:3;flex-basis:100%;font-size:10px}
+  .tabs{overflow-x:auto;-webkit-overflow-scrolling:touch;flex-wrap:nowrap}
+  .tab{padding:9px 13px;font-size:12px;white-space:nowrap;flex:0 0 auto}
+  .content{padding:8px}
+  .ph{gap:6px}
+  .nb{padding:9px 12px;font-size:13px}
+  .sel{padding:8px 8px;font-size:14px}
+  .legend{font-size:10px;gap:5px}
+  .tscroll{max-height:calc(100vh - 200px)}
+  table.planning th,table.planning td{min-width:22px}
+  /* Fenêtres (modales) adaptées au petit écran */
+  .mbox{min-width:0;width:94vw;max-width:440px;padding:16px}
+  .pmbox{min-width:0;width:94vw;max-width:440px}
+  .mopts{grid-template-columns:repeat(3,1fr)}
+  #exportMonthGrid{grid-template-columns:repeat(3,1fr) !important}
+  .ob{padding:9px 3px}
+  .pmrow{flex-wrap:wrap}
+  .pmrow label{min-width:auto}
+  .stats-grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .lock-box{padding:24px 18px}
+}
+@media (max-width:480px){
+  h1{font-size:13px}
+  h1 span.sub{font-size:10px}
+  .nb{padding:9px 10px;font-size:12px}
+  .tab{padding:8px 10px}
+  .stats-grid{grid-template-columns:1fr 1fr;gap:6px}
+  .mopts{grid-template-columns:repeat(2,1fr)}
+}
+
 /* PRINT */
 @media print {
   *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important}
@@ -142,6 +189,40 @@ table.st td:first-child{text-align:left;font-weight:bold;background:#e8e8e8}
 </style>
 </head>
 <body>
+
+<!-- ============ PAGE D'ACCUEIL / CONNEXION ============ -->
+<div id="loginGate">
+  <div class="login-card">
+    <svg class="login-logo" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Planning APU Nuit">
+      <defs>
+        <linearGradient id="apuLg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#2b7fbb"/><stop offset="1" stop-color="#0d2b45"/>
+        </linearGradient>
+        <mask id="apuMoon">
+          <rect width="120" height="120" fill="#000"/>
+          <circle cx="64" cy="52" r="25" fill="#fff"/>
+          <circle cx="75" cy="43" r="21" fill="#000"/>
+        </mask>
+      </defs>
+      <rect x="5" y="5" width="110" height="110" rx="27" fill="url(#apuLg)"/>
+      <rect x="5" y="5" width="110" height="110" fill="#fdf3cf" mask="url(#apuMoon)"/>
+      <circle cx="40" cy="30" r="2.6" fill="#fff"/>
+      <circle cx="52" cy="22" r="1.7" fill="#fff"/>
+      <circle cx="33" cy="45" r="1.7" fill="#fff"/>
+      <g fill="#e63946">
+        <rect x="53" y="90" width="18" height="6" rx="2.5"/>
+        <rect x="59" y="84" width="6" height="18" rx="2.5"/>
+      </g>
+    </svg>
+    <div class="login-title">PLANNING APU</div>
+    <div class="login-sub">🌙 Service de Nuit — C.S.E. Hôpital</div>
+    <input type="password" id="loginPw" placeholder="Mot de passe" autocomplete="current-password" autofocus onkeydown="if(event.key==='Enter')doLogin()">
+    <div class="login-err" id="loginErr"></div>
+    <button class="login-btn" onclick="doLogin()">Entrer</button>
+  </div>
+</div>
+<script>try{if(sessionStorage.getItem('apu_login')==='1')document.getElementById('loginGate').classList.add('hidden');}catch(e){}</script>
+
 <h1>🏥 Planning APU — Service de Nuit <span class="sub">C.S.E. Hôpital</span><span id="syncStatus" style="margin-left:auto;font-size:11px;opacity:.8;font-weight:normal">⏳ Connexion...</span></h1>
 <div class="tabs">
   <button class="tab active" onclick="showTab('planning')">📅 Planning</button>
@@ -861,6 +942,18 @@ function showTab(name){
   if(name==='stats')renderStats();
   if(name==='annuel')renderAnnuel();
   if(name==='trame'&&trameUnlocked)renderTrame();
+}
+
+// ---- Page d'accueil / connexion ----
+function doLogin(){
+  const v=document.getElementById('loginPw').value;
+  if(v===TRAME_PW){
+    try{sessionStorage.setItem('apu_login','1');}catch(e){}
+    document.getElementById('loginGate').classList.add('hidden');
+  } else {
+    document.getElementById('loginErr').textContent='❌ Mot de passe incorrect';
+    const i=document.getElementById('loginPw');i.value='';i.focus();
+  }
 }
 
 // ---- Init ----
