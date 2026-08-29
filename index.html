@@ -114,6 +114,25 @@ table.st td:first-child{text-align:left;font-weight:bold;background:#e8e8e8}
 .login-btn:hover{filter:brightness(1.12)}
 .login-err{color:#cc0000;font-size:13px;min-height:20px;margin:4px 0 2px}
 
+/* ============ ÉCRAN DE CHOIX (Planning / Dispose) ============ */
+#chooserGate{position:fixed;inset:0;z-index:9998;background:linear-gradient(135deg,#123f63 0%,#0d2b45 100%);display:flex;align-items:center;justify-content:center;padding:20px}
+#chooserGate.hidden{display:none}
+.chooser-wrap{text-align:center;max-width:720px;width:100%}
+.chooser-wrap h2{color:#fff;font-size:23px;font-weight:bold;margin-bottom:4px}
+.chooser-wrap .cs{color:#a9c6dd;font-size:14px;margin-bottom:26px}
+.chooser-cards{display:flex;gap:20px;justify-content:center;flex-wrap:wrap}
+.chooser-card{background:#fff;border-radius:16px;padding:30px 24px;width:290px;cursor:pointer;box-shadow:0 12px 36px rgba(0,0,0,.35);border:3px solid transparent;transition:transform .12s ease,border-color .12s ease}
+.chooser-card:hover{transform:translateY(-4px)}
+.chooser-card.p:hover{border-color:#155E8E}
+.chooser-card.d:hover{border-color:#1a7a40}
+.chooser-card .ico{font-size:54px;margin-bottom:10px;line-height:1}
+.chooser-card .t{font-size:20px;font-weight:bold;margin-bottom:8px}
+.chooser-card.p .t{color:#155E8E}
+.chooser-card.d .t{color:#1a7a40}
+.chooser-card .d2{font-size:12.5px;color:#6b7785;line-height:1.45}
+.nb.changer{background:transparent;border:1px solid rgba(255,255,255,.5);padding:4px 10px;font-size:11px}
+.nb.changer:hover{background:rgba(255,255,255,.15)}
+
 /* ============ MOBILE / RESPONSIVE (n'affecte PAS le PC) ============ */
 @media (max-width:820px){
   body{font-size:13px}
@@ -223,7 +242,28 @@ table.st td:first-child{text-align:left;font-weight:bold;background:#e8e8e8}
 </div>
 <script>try{if(sessionStorage.getItem('apu_login')==='1')document.getElementById('loginGate').classList.add('hidden');}catch(e){}</script>
 
-<h1>🏥 Planning APU — Service de Nuit <span class="sub">C.S.E. Hôpital</span><span id="syncStatus" style="margin-left:auto;font-size:11px;opacity:.8;font-weight:normal">⏳ Connexion...</span></h1>
+<!-- ============ ÉCRAN DE CHOIX ============ -->
+<div id="chooserGate">
+  <div class="chooser-wrap">
+    <h2>Que veux-tu consulter&nbsp;?</h2>
+    <div class="cs">Choisis le planning à ouvrir</div>
+    <div class="chooser-cards">
+      <div class="chooser-card p" onclick="chooseMode('planning')">
+        <div class="ico">📅</div>
+        <div class="t">Planning</div>
+        <div class="d2">Ton planning : édition, trames 🔒,<br>statistiques et bilan annuel</div>
+      </div>
+      <div class="chooser-card d" onclick="chooseMode('dispose')">
+        <div class="ico">📖</div>
+        <div class="t">Planning Dispose</div>
+        <div class="d2">Planning officiel APHP (lecture seule) :<br>stats et bilan Dispose</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>try{if(sessionStorage.getItem('apu_mode'))document.getElementById('chooserGate').classList.add('hidden');}catch(e){}</script>
+
+<h1>🏥 Planning APU — Service de Nuit <span class="sub">C.S.E. Hôpital</span><button class="nb changer" style="margin-left:auto" onclick="backToChooser()">⇄ Changer de planning</button><span id="syncStatus" style="font-size:11px;opacity:.8;font-weight:normal;margin-left:12px">⏳ Connexion...</span></h1>
 <div class="tabs">
   <button class="tab active" onclick="showTab('planning')">📅 Planning</button>
   <button class="tab" onclick="showTab('trame')">📋 Trames 🔒</button>
@@ -1153,12 +1193,37 @@ function renderAnnuelDispose(){
   cont.innerHTML=h;
 }
 
-// ---- Page d'accueil / connexion ----
+// ---- Page d'accueil / connexion + choix du planning ----
+const TAB_GROUPS={planning:['planning','trame','stats','annuel'],dispose:['dispose','statsdispose','annueldispose']};
+let currentMode=null;
+const ALL_TABS=['planning','trame','stats','annuel','dispose','statsdispose','annueldispose'];
+
+function applyModeTabs(mode){
+  currentMode=mode;
+  const group=TAB_GROUPS[mode]||TAB_GROUPS.planning;
+  document.querySelectorAll('.tabs .tab').forEach((el,i)=>{el.style.display=group.includes(ALL_TABS[i])?'':'none';});
+  showTab(group[0]);
+}
+function chooseMode(mode){
+  try{sessionStorage.setItem('apu_mode',mode);}catch(e){}
+  document.getElementById('chooserGate').classList.add('hidden');
+  applyModeTabs(mode);
+}
+function backToChooser(){
+  try{sessionStorage.removeItem('apu_mode');}catch(e){}
+  document.getElementById('chooserGate').classList.remove('hidden');
+}
+function openAfterLogin(){
+  let m=null; try{m=sessionStorage.getItem('apu_mode');}catch(e){}
+  if(m&&TAB_GROUPS[m]){ document.getElementById('chooserGate').classList.add('hidden'); applyModeTabs(m); }
+  else document.getElementById('chooserGate').classList.remove('hidden');
+}
 function doLogin(){
   const v=document.getElementById('loginPw').value;
   if(v===TRAME_PW){
     try{sessionStorage.setItem('apu_login','1');}catch(e){}
     document.getElementById('loginGate').classList.add('hidden');
+    openAfterLogin();
   } else {
     document.getElementById('loginErr').textContent='❌ Mot de passe incorrect';
     const i=document.getElementById('loginPw');i.value='';i.focus();
@@ -1188,6 +1253,13 @@ async function init(){
   Object.keys(trames||{}).forEach(y=>_yrs.add(+y));
   _yrs.forEach(y=>{if(y>=2000&&y<=2100)ensureYearOption(y);});
   render();renderStats();renderAnnuel();
+  // Si déjà connecté cette session : masquer la connexion et restaurer le choix
+  try{
+    if(sessionStorage.getItem('apu_login')==='1'){
+      document.getElementById('loginGate').classList.add('hidden');
+      openAfterLogin();
+    }
+  }catch(e){}
 }
 
 async function refreshFromCloud(){
